@@ -1,22 +1,22 @@
 from setuptools import setup
 
 setup(
-    name="simpleaichat",
-    packages=["simpleaichat"],  # this must be the same as the name above
-    version="0.2.2",
+    name="aiapi",
+    packages=["aiapi"],  # this must be the same as the name above
+    version="0.1.1",
     description="A Python package for easily interfacing with chat apps, with robust features and minimal code complexity.",
     long_description=open("README.md", "r", encoding="utf-8").read(),
     long_description_content_type="text/markdown",
-    author="Max Woolf",
-    author_email="max@minimaxir.com",
-    url="https://github.com/minimaxir/simpleaichat",
-    keywords=["chatgpt", "openai", "text generation", "ai"],
+    author="Vand",
+    author_email="info@vand.io",
+    url="https://github.com/vand-io/aiapi",
+    keywords=["chatgpt", "openai", "ai"],
     classifiers=[],
     license="MIT",
     entry_points={
         "console_scripts": ["simpleaichat=simpleaichat.cli:interactive_chat"]
     },
-    python_requires=">=3.8",
+    python_requires=">=3.10",
     install_requires=[
         "pydantic>=2.0",
         "fire>=0.3.0",

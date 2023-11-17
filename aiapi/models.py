@@ -21,7 +21,7 @@ class ChatMessage(BaseModel):
     role: str
     content: str
     name: Optional[str] = None
-    function_call: Optional[str] = None
+    functions: Optional[list] = None #function_call handled by role & content; functions are what user presents to AI
     received_at: datetime.datetime = Field(default_factory=now_tz)
     finish_reason: Optional[str] = None
     prompt_length: Optional[int] = None
@@ -91,3 +91,84 @@ class ChatSession(BaseModel):
         elif self.save_messages:
             self.messages.append(user_message)
             self.messages.append(assistant_message)
+
+    def add_message(
+        self,
+        message: ChatMessage,
+        save_messages: bool = None,
+    ) -> None:
+
+        # if save_messages is explicitly defined, always use that choice
+        # instead of the default
+        to_save = isinstance(save_messages, bool)
+
+        if to_save:
+            if save_messages:
+                self.messages.append(message)
+
+        elif self.save_messages:
+            self.messages.append(message)
+
+class AITool:
+    instances = set() 
+    def __init__(self, spec, func):
+        # if any(instance.name == name for instance in self.__class__.instances):
+        #    raise ValueError(f"An instance with the name '{name}' already exists")
+        # Remove any existing instance with the same name; this will overwrite in the case of duplicate names
+        self.__class__.instances = {instance for instance in self.__class__.instances if instance.name != spec['name']}
+        self.name = spec['name']
+        self.func = func
+        self.spec = spec
+        self.__class__.instances.add(self) 
+
+    @classmethod
+    def define_function(
+        cls,
+        spec: dict,
+        func: callable,
+    ):
+        if isinstance(spec, dict):
+            return cls(spec, func)
+        elif isinstance(spec, list):
+            instances = []
+            for spec_item in spec:
+                # Process each spec dictionary in the list
+                instance = cls(spec_item, func)
+                instances.append(instance)
+            return instances
+        else:
+            raise ValueError("Invalid spec argument")
+
+        return cls(spec, func)
+
+    @classmethod
+    def get_function_names(cls):
+        functions = []
+        for instance in cls.instances:
+            functions.append(instance.name)
+        return functions
+
+    @classmethod
+    def find_function_spec(cls, function_name):
+       for instance in cls.instances:
+           if instance.name == function_name:
+               return instance.spec
+               break # Stop after finding the first match
+
+    @classmethod
+    def execute_function(cls, function_call):
+        function_name = function_call['function_call']['name']
+        arguments = function_call['function_call'].get('arguments')
+        if arguments is not None and arguments != "":
+            arguments = orjson.loads(arguments)
+        else:
+            arguments = {}
+        for instance in cls.instances:
+           if instance.name == function_name:
+                # catch instances from Vand's VandBasicAPITool
+                if hasattr(instance.func, '__self__') and instance.func.__self__.__class__.__name__ == "VandBasicAPITool":
+                    return instance.func(function_name, **arguments)
+                else:
+                    return instance.func(**arguments)
+                    break # Stop after finding the first match
+

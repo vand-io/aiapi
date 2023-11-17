@@ -7,6 +7,7 @@ WIKIPEDIA_API_URL = "https://en.wikipedia.org/w/api.php"
 
 
 def wikipedia_search(query: str, n: int = 1) -> Union[str, List[str]]:
+    """Search Wikipedia."""
     SEARCH_PARAMS = {
         "action": "query",
         "list": "search",

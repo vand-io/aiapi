@@ -3,8 +3,10 @@ from httpx import Client, AsyncClient
 from typing import List, Dict, Union, Set, Any
 import orjson
 
-from .models import ChatMessage, ChatSession
+from .models import ChatMessage, ChatSession, AITool
 from .utils import remove_a_key
+
+from .vand_utils import VandBasicAPITool
 
 tool_prompt = """From the list of tools below:
 - Reply ONLY with the number of the tool appropriate in response to the user's last message.
@@ -22,9 +24,11 @@ class ChatGPTSession(ChatSession):
     def prepare_request(
         self,
         prompt: str,
+        function_name: str = None,
         system: str = None,
         params: Dict[str, Any] = None,
         stream: bool = False,
+        functions: List = None,
         input_schema: Any = None,
         output_schema: Any = None,
         is_function_calling_required: bool = True,
@@ -35,8 +39,17 @@ class ChatGPTSession(ChatSession):
         }
 
         system_message = ChatMessage(role="system", content=system or self.system)
+        #used for ChatMessage;
+        function_list = []
+        if functions:
+            for function in functions:
+                function_list.append(function['name'])
+
         if not input_schema:
-            user_message = ChatMessage(role="user", content=prompt)
+            if function_name:
+                user_message = ChatMessage(role="function", name=function_name, content=prompt, functions=function_list)
+            else:
+                user_message = ChatMessage(role="user", content=prompt, functions=function_list)
         else:
             assert isinstance(
                 prompt, input_schema
@@ -54,6 +67,9 @@ class ChatGPTSession(ChatSession):
             "stream": stream,
             **gen_params,
         }
+
+        if functions:
+            data["functions"] = functions
 
         # Add function calling parameters if a schema is provided
         if input_schema or output_schema:
@@ -86,18 +102,41 @@ class ChatGPTSession(ChatSession):
             "parameters": schema_dict,
         }
 
+    def process_function_call(self, func_call):
+        function_name = func_call['function_call']["name"]
+        tools = []
+        print(f"function call: {func_call}")
+        if AITool.find_function_spec(function_name):
+            toolMessage = AITool.execute_function(func_call)
+            # here we check to see if the tool call resulted in a new tool being added
+            if isinstance(toolMessage, tuple):
+                toolMessage, toolPack = toolMessage
+                if toolPack:
+                    for tool in toolPack:
+                        tools.append(tool['name'])
+                    print(f"Message {toolMessage} and we got a toolpack! {toolPack}")
+                    # get the name of the first tool and use that to find the correct instance of VandBasicAPITool
+                    vand_tool = VandBasicAPITool._find_function(tools[0])
+                    AITool.define_function(spec=vand_tool.functions, func=vand_tool.execute_tool_call)
+        else:
+            raise ValueError(f"No function exists with name {function_name}.")
+        print (toolMessage)
+        return function_name, toolMessage, tools
+
     def gen(
         self,
         prompt: str,
         client: Union[Client, AsyncClient],
+        function_name: str = None,
         system: str = None,
         save_messages: bool = None,
         params: Dict[str, Any] = None,
+        functions: List[Any] = None,
         input_schema: Any = None,
         output_schema: Any = None,
     ):
         headers, data, user_message = self.prepare_request(
-            prompt, system, params, False, input_schema, output_schema
+            prompt, function_name, system, params, False, functions, input_schema, output_schema
         )
 
         r = client.post(
@@ -110,16 +149,75 @@ class ChatGPTSession(ChatSession):
 
         try:
             if not output_schema:
-                content = r["choices"][0]["message"]["content"]
-                assistant_message = ChatMessage(
-                    role=r["choices"][0]["message"]["role"],
-                    content=content,
-                    finish_reason=r["choices"][0]["finish_reason"],
-                    prompt_length=r["usage"]["prompt_tokens"],
-                    completion_length=r["usage"]["completion_tokens"],
-                    total_length=r["usage"]["total_tokens"],
-                )
-                self.add_messages(user_message, assistant_message, save_messages)
+                if r["choices"][0]["message"]["content"]:
+                    content = r["choices"][0]["message"]["content"]
+
+                    assistant_message = ChatMessage(
+                        role=r["choices"][0]["message"]["role"],
+                        content=str(content),
+                        finish_reason=r["choices"][0]["finish_reason"],
+                        prompt_length=r["usage"]["prompt_tokens"],
+                        completion_length=r["usage"]["completion_tokens"],
+                        total_length=r["usage"]["total_tokens"],
+                    )
+                    self.add_messages(user_message, assistant_message, save_messages)
+                else:
+                    self.add_message(user_message, save_messages)
+
+                if r["choices"][0]["message"].get("function_call"):
+                    func_call = {'function_call': r["choices"][0]["message"]["function_call"]}
+                    #function_name=func_call["function_call"]["name"]
+                    # check for local function
+                    # if AITool.find_function_spec(function_name):
+                    #     toolMessage = AITool.execute_function(func_call)
+                    #     if isinstance(toolMessage, tuple):
+                    #         toolMessage, toolPack = toolMessage
+                    #     else:
+                    #         toolMessage = toolMessage
+                    #         toolPack = None
+
+                    function_name, toolMessage, tools = self.process_function_call(func_call)
+
+                    
+                    # else:
+                    #     toolMessage, toolPack = VandBasicAPITool.execute_function_call(func_call)
+                    
+                    # this is the function call message
+                    assistant_message = ChatMessage(
+                        role=r["choices"][0]["message"]["role"],
+                        content=str(func_call),
+                        finish_reason=r["choices"][0]["finish_reason"],
+                        prompt_length=r["usage"]["prompt_tokens"],
+                        completion_length=r["usage"]["completion_tokens"],
+                        total_length=r["usage"]["total_tokens"],
+                    )
+                    self.add_message(assistant_message, save_messages)
+
+                    # debugging 
+                    '''
+                    print(f"tool message: {toolMessage}")
+                    if toolPack is not None:
+                        tools = []
+                        for tool in toolPack:
+                            tools.append(tool['name'])
+                        print(f"functions: {tools}")
+                    '''
+                    # end debugging
+
+                    prompt = toolMessage
+                    functions = tools
+                    # prepare message and return results of function call to model
+                    return self.gen(
+                        prompt,
+                        client=client,
+                        function_name=function_name,
+                        system=system,
+                        save_messages=save_messages,
+                        params=params,
+                        functions=functions,
+                        input_schema=input_schema,
+                        output_schema=output_schema,
+                    ) 
             else:
                 content = r["choices"][0]["message"]["function_call"]["arguments"]
                 content = orjson.loads(content)
@@ -132,18 +230,46 @@ class ChatGPTSession(ChatSession):
 
         return content
 
+
     def stream(
         self,
         prompt: str,
         client: Union[Client, AsyncClient],
+        function_name: str = None,
         system: str = None,
         save_messages: bool = None,
         params: Dict[str, Any] = None,
+        functions: List[Any] = None,
         input_schema: Any = None,
     ):
+        # if functions:
+        #     if functions[0] == "default":
+        #         vand_id = functions[0]
+        #         vand_tool = VandBasicAPITool.get_toolpack(vand_id)
+        #         functions = vand_tool.functions
+        #     print(f"functions passed: {functions[0]['name']}")
+
+        if functions:
+            function_specs= []
+            for function in functions:
+                if function.startswith("vand-") or function=="default":
+                    vand_tool = VandBasicAPITool.get_toolpack(function)
+                    AITool.define_function(spec=vand_tool.functions, func=vand_tool.execute_tool_call)
+                    print(f"functions: {AITool.get_function_names()}")
+                    function_specs += vand_tool.functions
+                else:
+                    # check for locally defined functions
+                    if AITool.find_function_spec(function):
+                        function_specs.append(AITool.find_function_spec(function))
+            print(f"functions passed: {functions}")
+            functions = function_specs
+
+
         headers, data, user_message = self.prepare_request(
-            prompt, system, params, True, input_schema
+            prompt, function_name, system, params, True, functions, input_schema
         )
+
+        function_called = False
 
         with client.stream(
             "POST",
@@ -153,23 +279,79 @@ class ChatGPTSession(ChatSession):
             timeout=None,
         ) as r:
             content = []
+            func_call = {'function_call': 
+                            {
+                                'name': '',
+                                'arguments': '',
+                            }
+                        }
             for chunk in r.iter_lines():
                 if len(chunk) > 0:
-                    chunk = chunk[6:]  # SSE JSON chunks are prepended with "data: "
-                    if chunk != "[DONE]":
-                        chunk_dict = orjson.loads(chunk)
-                        delta = chunk_dict["choices"][0]["delta"].get("content")
-                        if delta:
-                            content.append(delta)
-                            yield {"delta": delta, "response": "".join(content)}
-
+                    #print(f"here's the chunk: {chunk}")  
+                    if not chunk.startswith("data: "):
+                        content.append(chunk)
+                        # catch errors from OpenAI here, typically: {"error"
+                        # e.g. service not available
+                    else:
+                        chunk = chunk[6:]
+                        #chunk = chunk[6:]  # SSE JSON chunks are prepended with "data: "
+                        if chunk != "[DONE]":                  
+                            chunk_dict = orjson.loads(chunk)
+                            funct = chunk_dict["choices"][0]["delta"].get("function_call")
+                            if funct:
+                                if "name" in funct:
+                                    func_call['function_call']["name"] = funct["name"]
+                                if "arguments" in funct:
+                                    func_call['function_call']["arguments"] += funct["arguments"]
+                            if chunk_dict["choices"][0]["finish_reason"] == "function_call":
+                                print(f"Function call detected: {func_call}")
+                                function_called = True
+                            
+                            delta = chunk_dict["choices"][0]["delta"].get("content")
+                            if delta:
+                                content.append(delta)                                
+                                yield {"delta": delta, "response": "".join(content)}
+                                  
         # streaming does not currently return token counts
-        assistant_message = ChatMessage(
-            role="assistant",
-            content="".join(content),
-        )
+        if content:
+            assistant_message = ChatMessage(
+                role="assistant",
+                content="".join(content),
+            )
+            self.add_messages(user_message, assistant_message, save_messages)
+        else:
+            self.add_message(user_message, save_messages) 
+  
 
-        self.add_messages(user_message, assistant_message, save_messages)
+        if function_called:
+            # function_name = func_call['function_call']["name"]
+            function_name, toolMessage, tools = self.process_function_call(func_call)
+            # tools = []
+            # if AITool.find_function_spec(function_name):
+            #     toolMessage = AITool.execute_function(func_call)
+            #     if isinstance(toolMessage, tuple):
+            #         toolMessage, toolPack = toolMessage
+            #         if toolPack:
+            #             print(f"Message {toolMessage} and we got a toolpack! {toolPack}")
+            #             AITool.define_function(spec=toolPack, func=vand_tool.execute_tool_call)
+            #             for tool in toolPack:
+            #                 tools.append(tool['name'])
+
+            # toolMessage, toolPack = VandBasicAPITool.execute_function_call(func_call)
+            # print(f"Response from function (toolMessage): {toolMessage} and toolPack: {toolPack[0]['name']}")
+
+            for chunk_function in self.stream(toolMessage, client, function_name, functions=tools):
+                delta_function = chunk_function["delta"]
+                resonse_function = chunk_function["response"]
+                yield {"delta": chunk_function["delta"], "response": chunk_function["response"]}
+
+        #creating below so that function will return something but do NOT want an empty assistant message in the message log
+        if not content:
+            assistant_message = ChatMessage(
+                role="function",
+                name=function_name,
+                content=toolMessage,
+            )
 
         return assistant_message
 
@@ -399,3 +581,5 @@ class ChatGPTSession(ChatSession):
         self.add_messages(user_message, assistant_message, save_messages)
 
         return context_dict
+
+

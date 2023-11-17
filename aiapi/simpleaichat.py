@@ -4,6 +4,7 @@ import dateutil
 from uuid import uuid4, UUID
 from contextlib import contextmanager, asynccontextmanager
 import csv
+from termcolor import colored
 
 from pydantic import BaseModel
 from httpx import Client, AsyncClient
@@ -12,9 +13,10 @@ import orjson
 from dotenv import load_dotenv
 from rich.console import Console
 
-from .utils import wikipedia_search_lookup
-from .models import ChatMessage, ChatSession
+from .models import ChatMessage, ChatSession, AITool
 from .chatgpt import ChatGPTSession
+
+from .vand_utils import VandBasicAPITool
 
 load_dotenv()
 
@@ -35,7 +37,6 @@ class AIChat(BaseModel):
         console: bool = True,
         **kwargs,
     ):
-
         client = Client(proxies=os.getenv("https_proxy"))
         system_format = self.build_system(character, character_command, system)
 
@@ -119,6 +120,7 @@ class AIChat(BaseModel):
         system: str = None,
         save_messages: bool = None,
         params: Dict[str, Any] = None,
+        functions: List[Any] = None, # adding this but should really replace tools
         tools: List[Any] = None,
         input_schema: Any = None,
         output_schema: Any = None,
@@ -136,13 +138,39 @@ class AIChat(BaseModel):
                 save_messages=save_messages,
                 params=params,
             )
+        elif functions:
+            function_specs= []
+            for function in functions:
+                if function.startswith("vand-") or function=="default":
+                    vand_tool = VandBasicAPITool.get_toolpack(function)
+                    AITool.define_function(spec=vand_tool.functions, func=vand_tool.execute_tool_call)
+                    print(f"functions: {AITool.get_function_names()}")
+                    function_specs += vand_tool.functions
+                else:
+                    # check for locally defined functions
+                    if AITool.find_function_spec(function):
+                        function_specs.append(AITool.find_function_spec(function))
+
+            return sess.gen(
+                prompt,
+                client=self.client,
+                function_name=None,
+                system=system,
+                save_messages=save_messages,
+                params=params,
+                functions=function_specs,
+                input_schema=input_schema,
+                output_schema=output_schema,
+            )        
         else:
             return sess.gen(
                 prompt,
                 client=self.client,
+                function_name=None,
                 system=system,
                 save_messages=save_messages,
                 params=params,
+                functions=functions,
                 input_schema=input_schema,
                 output_schema=output_schema,
             )
@@ -154,17 +182,45 @@ class AIChat(BaseModel):
         system: str = None,
         save_messages: bool = None,
         params: Dict[str, Any] = None,
+        functions: List[Any] = None,
         input_schema: Any = None,
     ) -> str:
         sess = self.get_session(id)
-        return sess.stream(
-            prompt,
-            client=self.client,
-            system=system,
-            save_messages=save_messages,
-            params=params,
-            input_schema=input_schema,
-        )
+        if functions:
+            # function_specs= []
+            # for function in functions:
+            #     if function.startswith("vand-") or function=="default":
+            #         vand_tool = VandBasicAPITool.get_toolpack(function)
+            #         AITool.define_function(spec=vand_tool.functions, func=vand_tool.execute_tool_call)
+            #         print(f"functions loaded: {AITool.get_function_names()}")
+            #         function_specs += vand_tool.functions
+            #     else:
+            #         # check for locally defined functions
+            #         if AITool.find_function_spec(function):
+            #             function_specs.append(AITool.find_function_spec(function))
+            
+            return sess.stream(
+                prompt,
+                client=self.client,
+                function_name=None,
+                system=system,
+                save_messages=save_messages,
+                params=params,
+                functions=functions,
+                input_schema=input_schema,
+            )  
+
+        else:
+
+            return sess.stream(
+                prompt,
+                client=self.client,
+                system=system,
+                save_messages=save_messages,
+                params=params,
+                functions=functions,
+                input_schema=input_schema,
+            )
 
     def build_system(
         self, character: str = None, character_command: str = None, system: str = None
@@ -199,7 +255,7 @@ class AIChat(BaseModel):
         # prime with a unique starting response to the user
         if prime:
             console.print(f"[b]{character}[/b]: ", end="", style=ai_text_color)
-            for chunk in sess.stream("Hello!", self.client):
+            for chunk in sess.stream("Hello!", self.client, functions=['default']):
                 console.print(chunk["delta"], end="", style=ai_text_color)
 
         while True:
@@ -210,7 +266,7 @@ class AIChat(BaseModel):
                     break
 
                 console.print(f"[b]{character}[/b]: ", end="", style=ai_text_color)
-                for chunk in sess.stream(user_input, self.client):
+                for chunk in sess.stream(user_input, self.client, functions=['default']):
                     console.print(chunk["delta"], end="", style=ai_text_color)
             except KeyboardInterrupt:
                 break
@@ -249,7 +305,6 @@ class AIChat(BaseModel):
                     "prompt_length",
                     "completion_length",
                     "total_length",
-                    "finish_reason",
                 ]
                 w = csv.DictWriter(f, fieldnames=fields)
                 w.writeheader()
@@ -270,7 +325,6 @@ class AIChat(BaseModel):
                 )
 
     def load_session(self, input_path: str, id: Union[str, UUID] = uuid4(), **kwargs):
-
         assert input_path.endswith(".csv") or input_path.endswith(
             ".json"
         ), "Only CSV and JSON imports are accepted."
@@ -302,6 +356,41 @@ class AIChat(BaseModel):
                 sess_dict[arg] = kwargs[arg]
             self.new_session(**sess_dict)
 
+    def pprint_session(
+        self,
+        id: Union[str, UUID] = None,
+    ):
+        role_to_color = {
+            "system": "red",
+            "user": "green",
+            "assistant": "blue",
+            "function": "magenta",
+        }
+        print(f"this is a test {id}")
+        sess = self.get_session(id)
+        sess_dict = sess.model_dump(
+            exclude={"auth", "api_url", "input_fields"},
+            exclude_none=True,
+        )
+        
+        for message in sess_dict["messages"]:
+            # datetime must be in common format to be loaded into spreadsheet
+            # for human-readability, the timezone is set to local machine
+            local_datetime = message["received_at"].astimezone()
+            message["received_at"] = local_datetime.strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+            if message["role"] == "system":
+                print(colored(f"system: {message['content']}\n", role_to_color[message["role"]]))
+            elif message["role"] == "user":
+                print(colored(f"user: {message['content']}\n", role_to_color[message["role"]]))
+            elif message["role"] == "assistant" and message.get("function_call"):
+                print(colored(f"assistant: {message['function_call']}\n", role_to_color[message["role"]]))
+            elif message["role"] == "assistant" and not message.get("function_call"):
+                print(colored(f"assistant: {message['content']}\n", role_to_color[message["role"]]))
+            elif message["role"] == "function":
+                print(colored(f"function ({message['name']}): {message['content']}\n", role_to_color[message["role"]]))
+    
     # Tabulators for returning total token counts
     def message_totals(self, attr: str, id: Union[str, UUID] = None) -> int:
         sess = self.get_session(id)
@@ -324,6 +413,7 @@ class AIChat(BaseModel):
     def total_tokens(self, id: Union[str, UUID] = None) -> int:
         return self.total_length(id)
 
+    
 
 class AsyncAIChat(AIChat):
     async def __call__(
@@ -333,6 +423,7 @@ class AsyncAIChat(AIChat):
         system: str = None,
         save_messages: bool = None,
         params: Dict[str, Any] = None,
+        functions: List[Any] = None,
         tools: List[Any] = None,
         input_schema: Any = None,
         output_schema: Any = None,
@@ -353,6 +444,21 @@ class AsyncAIChat(AIChat):
                 save_messages=save_messages,
                 params=params,
             )
+        elif functions:
+            vand_id = functions[0]
+            vand_tool = VandBasicAPITool.get_toolpack(vand_id)
+            functions = vand_tool.functions
+            return sess.gen(
+                prompt,
+                client=self.client,
+                function_name=None,
+                system=system,
+                save_messages=save_messages,
+                params=params,
+                functions=functions,
+                input_schema=input_schema,
+                output_schema=output_schema,
+            )    
         else:
             return await sess.gen_async(
                 prompt,
@@ -394,3 +500,4 @@ class AsyncAIChat(AIChat):
             yield sess
         finally:
             self.delete_session(sess.id)
+
