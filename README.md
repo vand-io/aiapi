@@ -1,12 +1,12 @@
 
 # Vand.io AIAPI Library
 
-AIAPI is derived from [simpleaichat](https://github.com/minimaxir/simpleaichat) by minimaxir. Simpleaichat is an excellent library for interacting with AI models.  AIAPI adds function calling and access to a catalog of functions (tools) from vand.io.  If you're not interested in function calling (aka tool calling) you might want to consider using simpleaichat instead.
+AIAPI is derived from [simpleaichat](https://github.com/minimaxir/simpleaichat) by minimaxir. Simpleaichat is an excellent library for interacting with AI models.  AIAPI adds function calling and access to a catalog of functions (tools) found on [Vand.io](https://www.vand.io).  If you're not interested in function calling (aka tool calling) you might want to consider using simpleaichat instead.
 
 ### AIAPI
 AIAPI is a python library that provides convenient access to OpenAI (and soon other) APIs and LLMs.   AIAPI can be used from a browser interface (soon), command line, and embedded as a library in your application.  It has several advantages that simplify the development of applications that leverage AI models.
 
-* Easy to use  sessions that string together all the messages (assistant, user, and function).  This is similar to OpenAI's Assistant API and it's concepts of Threads but handled client side giving you significantly more control including viewing, edited (including assistant messages) and truncating to reduce size to save tokens and.
+* Easy to use  sessions that string together all the messages (assistant, user, and function).  This is similar to OpenAI's Assistant API and it's concepts of Threads but handled client side giving you significantly more control including viewing, editing (including assistant messages) and truncating to reduce size to save tokens.
 * Sessions can be saved, and loaded.
 * Include functions / tools in your application to augment the AI model's capabilities.  These include your own custom tools as well as access to thousands of tools found on https://vand.io.
 
@@ -59,7 +59,7 @@ We'll start off with three types of tool use (function calling) with your AI mod
 ### Utilizing Tools from Vand.io
 The quickest way to augment your AI model with a tool or function is to select from the thousands of tools available from the Vand.io catalog.  You can search and select tools at https://www.vand.io.
 
-In this example we'll use a simple tool to get the weather in Detroit.  You can inspect the code and try this out yourself with the get_weather.py file in the examples folder.
+In this example we'll use a simple tool to get the weather in Detroit.  You can inspect the code and try this out yourself with the [get_weather.py](https://github.com/vand-io/aiapi/blob/main/examples/get_weather.py) file in the examples folder.
 
 First we'll import our dependencies.
 ```py3
@@ -106,7 +106,7 @@ ai.pprint_session()
 
 ### Using a Custom Function
 
-In this example we'll write a very simple python function to get the current time from our system.  You can inspect the code and try this out yourself with the custom_functions.py file in the examples folder.
+In this example we'll write a very simple python function to get the current time from our system.  You can inspect the code and try this out yourself with the [custom_functions.py](https://github.com/vand-io/aiapi/blob/main/examples/custom_function.py) file in the examples folder.
 
 First we'll import our dependencies.  Note we're importing a few more things from aiapi this time.
 ```py3
