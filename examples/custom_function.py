@@ -32,9 +32,21 @@ currentTime_spec = {
     },
 }
 
-
 # Make the function available for use
 AITool.define_function(spec=currentTime_spec, func=currentTime)
+
+def get_vand_toolpack(toolpack_id):
+    toolpacks = []
+    vand_tool = VandBasicAPITool.get_toolpack(toolpack_id)
+    if vand_tool.functions:
+        for tool in vand_tool.functions:
+            toolpacks.append(tool['name'])
+    # Make the tools available for use
+    AITool.define_function(spec=vand_tool.functions, func=vand_tool.execute_tool_call)
+    # return the list of tool names
+    return toolpacks
+
+
 
 # Initiate a new AIChat session
 ai = AIChat(console=False)
@@ -50,9 +62,9 @@ for chunk in ai.stream("What time is it?", functions=["currentTime"]):
 print("")
 
 # Load a tool directly from Vand (https://vand.io)
-# Note each tool could countain several "functions"
-vand_tool = VandBasicAPITool.get_toolpack("vand-6657ac86-b112-4776-a5cc-fae3aa80ba56")
-AITool.define_function(spec=vand_tool.functions, func=vand_tool.execute_tool_call)
+# Note each toolpack could countain several tools (aka functions)
+get_vand_toolpack("vand-6657ac86-b112-4776-a5cc-fae3aa80ba56")
+
 
 # See what tools are available
 tools = AITool.get_function_names()

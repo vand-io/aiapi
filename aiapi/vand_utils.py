@@ -148,6 +148,9 @@ class VandBasicAPITool:
         return result_message, functions
 
     def execute_tool_call(self, functionName, **args):
+        '''
+        execute_tool_call is similar to execute_function_call but accepts **args so that custom local functions can be defined. 
+        '''
         functions = None # normal functions will not return additional function calls
         # default function for chat complettion calls.
         base_url = self.servers[0]["url"]

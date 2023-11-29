@@ -108,7 +108,7 @@ class ChatGPTSession(ChatSession):
         print(f"function call: {func_call}")
         if AITool.find_function_spec(function_name):
             toolMessage = AITool.execute_function(func_call)
-            # here we check to see if the tool call resulted in a new tool being added
+            # here we check to see if the tool call resulted in new tools being added
             if isinstance(toolMessage, tuple):
                 toolMessage, toolPack = toolMessage
                 if toolPack:

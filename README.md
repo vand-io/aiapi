@@ -25,8 +25,20 @@ or create a *.env* file in your working directory with the key.
 OPENAI_API_KEY="sk-..."
 ```
 
+### Quickstart - browser
+This example uses [Gradio](https://www.gradio.app/) to create a web interface you can use for your chatbot with functions.  Make sure you have Gradio installed before using this.
+`pip install gradio`
+
+Then run the gui example found in the examples directory:
+`python gui_example.py`
+
+You can change what tools are available by editing the `gui_example.py` file.
+
+https://github.com/vand-io/aiapi/assets/47832730/c819055a-3d67-43d3-9a89-e25c1e5e1945
+
 ### Quickstart - CLI
 You can launch AIAPI from the console with:
+
 `aiapi`
 
 This will launch an interactive console:
@@ -46,9 +58,6 @@ ai = AIChat(system="You are a helpful assistant.  Take a deep breath and think s
 # sent a user message to the model
 ai("What's the difference between a duck and a loon?")
 ```
-
-### Quickstart - browser
-(coming soon)
 
 ## Using AIAPI in your code
 We'll start off with three types of tool use (function calling) with your AI model.  
